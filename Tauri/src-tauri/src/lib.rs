@@ -84,6 +84,8 @@ pub fn run() {
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(520.0, 600.0)
                 .incognito(true)
+                // 原生拖放处理器会吞掉 drop 事件，关掉才能让网页收到从访达拖入的文件。
+                .disable_drag_drop_handler()
                 .on_navigation(move |target| {
                     if is_same_origin(&entry, target) {
                         return true;
