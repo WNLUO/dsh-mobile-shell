@@ -41,7 +41,26 @@ Tauri CLI 只在构建时临时用一次，不写进 `Tauri/package.json`。`.gi
 
 ## 发布
 
-版本号在 `Tauri/shell-version.json`。五个平台包都构建、检查通过后：
+版本号在 `Tauri/shell-version.json`。壳改动后抬版本、提交，再推一个与版本同名的 tag：
+
+```sh
+git tag shell-v0.1.0
+git push origin shell-v0.1.0
+```
+
+tag 触发 CI 编出五个平台包，并用 [npm 可信发布](https://docs.npmjs.com/trusted-publishers)一起发到 npm。CI 不存任何 npm 令牌：npm 认的是本仓库与 `desktop-shell.yml` 这条流水线，由 GitHub 现场签一张短效身份凭证。发之前会核对 tag、版本文件与五个包内版本一致，发完核对注册表里五个版本都到位。分支 push 和手动触发只编不发。
+
+每个平台包要在 npm 设置页登记一次可信发布关系（GitHub 仓库 `WNLUO/dsh-mobile-shell`、工作流文件 `desktop-shell.yml`），登记一次即固定，之后不用再动。设置页：
+
+- [dsh-mobile-shell-darwin-arm64](https://www.npmjs.com/package/dsh-mobile-shell-darwin-arm64/access)
+- [dsh-mobile-shell-darwin-x64](https://www.npmjs.com/package/dsh-mobile-shell-darwin-x64/access)
+- [dsh-mobile-shell-linux-x64](https://www.npmjs.com/package/dsh-mobile-shell-linux-x64/access)
+- [dsh-mobile-shell-linux-arm64](https://www.npmjs.com/package/dsh-mobile-shell-linux-arm64/access)
+- [dsh-mobile-shell-win32-x64](https://www.npmjs.com/package/dsh-mobile-shell-win32-x64/access)
+
+npm 不给尚不存在的包提供设置页，所以每个包的第一个版本要先由维护者本机手动发布一次；包存在之后才登记信任关系，再往后就全由 tag 自动发布。
+
+本地手动发版（五个平台包目录齐备时）：
 
 ```sh
 node tools/publish-desktop-shell.mjs --dry-run   # 只看要发什么
@@ -50,8 +69,6 @@ node tools/publish-desktop-shell.mjs --wire      # 打印应写进插件 optiona
 ```
 
 顺序不能反：平台包先上 npm，插件才把版本号登记进 `optionalDependencies` 并更新锁文件，然后才发主插件包，这样主包带的是已经存在于 npm 上的依赖。插件清单在插件仓库维护，本仓库的发布脚本只打印需要写入的五个包名与版本号。
-
-`workflow_dispatch` 或推送 `shell-v*` tag 时，CI 的发布任务会把五个平台包一起发到 npm；凭据只从 `NPM_TOKEN` secret 取，仓库里不落任何凭据。
 
 ## 目录
 

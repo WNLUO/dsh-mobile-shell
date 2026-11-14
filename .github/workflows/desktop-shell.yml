@@ -6,7 +6,11 @@
 # 显示组件，不是给最终用户双击安装的应用。
 #
 # 构建出的裸产物由 tools/build-desktop-shell.mjs 打成 build/desktop-shell/<平台>/ 里的平台包，
-# 上传为 artifact；手动触发或打 shell-v* tag 时，再把五个平台包一起发到 npm。
+# 上传为 artifact；推送 shell-v* tag 时，发布任务用 npm 可信发布把五个平台包一起发到 npm。
+#
+# 发布不存任何 npm 令牌：npm 认的是「哪个仓库里的哪条流水线」，由 GitHub 现场签一张短效身份凭证。
+# 仓库与工作流文件名要在每个包的 npm 设置页登记一次（首次发布必须由维护者本机完成，见 README）。
+# 环境里绝不能出现 NODE_AUTH_TOKEN / NPM_TOKEN，否则 npm 会退回令牌认证、又变成要人去点验证器。
 #
 # Tauri CLI 只在流水线里临时用一次：npx 拉官方 @tauri-apps/cli@2，不往 Tauri/package.json
 # 写依赖、也不动插件的锁文件；cargo install tauri-cli 要在每个 runner 上从头编一遍 CLI，慢得多。
@@ -134,17 +138,40 @@ jobs:
   publish:
     name: 发布平台包
     needs: [macos, ubuntu, windows]
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    # 只有发版 tag 才发；手动触发与分支 push 只编不发，避免同版本重复发布。
+    if: startsWith(github.ref, 'refs/tags/shell-v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm 用它换取短效发布凭证。缺了这一步就退化成「未认证发布」。
+      id-token: write
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # Node 24 自带 npm 11.x（可信发布要求 ≥11.5.1）。不设 registry-url：
+      # 它会往 .npmrc 写 _authToken=${NODE_AUTH_TOKEN}，让 npm 退回令牌认证。
       - uses: actions/setup-node@v4
         with:
-          node-version: '26.8.1'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: '24'
+      - name: 确认 npm CLI 支持可信发布
+        run: |
+          version=$(npm --version)
+          echo "npm $version"
+          node -e "const [major, minor] = '$version'.split('.').map(Number);
+          if (major < 11 || (major === 11 && minor < 5)) {
+            console.error('npm $version 太旧：可信发布要求 11.5.1+');
+            process.exit(1);
+          }"
+      - name: 核对 tag 与 shell-version.json 版本
+        run: |
+          version=$(node -p "require('./Tauri/shell-version.json').version")
+          if [ "shell-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME 与 shell-version.json 的 $version 不一致" >&2
+            exit 1
+          fi
+          echo "准备发布 $version"
       - uses: actions/download-artifact@v4
         with:
           path: build/desktop-shell-artifacts
@@ -154,8 +181,36 @@ jobs:
           for archive in build/desktop-shell-artifacts/*/*.tgz; do
             tar -xzf "$archive" -C build/desktop-shell
           done
-      # npm 凭据只从 GitHub Actions 的 NPM_TOKEN secret 取，仓库里不落任何凭据。
+      - name: 核对五个平台包版本一致
+        run: |
+          version=$(node -p "require('./Tauri/shell-version.json').version")
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+            got=$(node -p "require('./build/desktop-shell/$platform/package.json').version")
+            if [ "$got" != "$version" ]; then
+              echo "$platform 包内版本 $got 与 $version 不一致" >&2
+              exit 1
+            fi
+          done
+          echo "五个平台包均为 $version"
       - name: 发布五个平台包
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node tools/publish-desktop-shell.mjs
+      - name: 核对注册表版本
+        run: |
+          version=$(node -p "require('./Tauri/shell-version.json').version")
+          start=$(date +%s)
+          deadline=$(( start + 900 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            missing=0
+            for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/dsh-mobile-shell-$platform/$version?t=$(date +%s)")
+              if [ "$code" != "200" ]; then missing=$(( missing + 1 )); fi
+            done
+            if [ "$missing" -eq 0 ]; then
+              echo "五个平台包 $version 均已在注册表（用时 $(( $(date +%s) - start )) 秒）"
+              exit 0
+            fi
+            echo "还有 $missing 个包未同步，等 15 秒再查"
+            sleep 15
+          done
+          echo "15 分钟内五个平台包仍未全部同步" >&2
+          exit 1

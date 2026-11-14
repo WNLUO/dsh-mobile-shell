@@ -93,6 +93,14 @@ function writePackage(target, dir, version) {
         files: packageFiles(target),
         license: 'MIT',
         private: false,
+        repository: {
+          type: 'git',
+          url: 'git+https://github.com/WNLUO/dsh-mobile-shell.git',
+        },
+        publishConfig: {
+          registry: 'https://registry.npmjs.org/',
+          access: 'public',
+        },
       },
       null,
       2,
