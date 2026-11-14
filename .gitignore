@@ -1,0 +1,14 @@
+# Rust / Tauri 编译产物与自动生成的 capability schema
+target/
+Tauri/src-tauri/gen/
+
+# 按平台的 npm 包与归档产物
+build/desktop-shell/
+build/desktop-shell-artifacts/
+shell-*.tgz
+*.tgz
+
+# 依赖与本机文件
+node_modules/
+.DS_Store
+.secrets/

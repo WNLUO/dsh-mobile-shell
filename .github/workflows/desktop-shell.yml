@@ -1,0 +1,161 @@
+# 远程电脑桌面显示壳：三个 runner 矩阵各编各的平台，出裸应用产物并打成按平台的 npm 包。
+#
+# Tauri 依赖各平台的系统 WebView，没法像 Go 那样在一台机器上交叉编译五个平台：macOS 要整份
+# .app，Windows / Linux 只要可执行文件，且各平台都在原生架构的 runner 上构建，产物统一落在
+# Tauri/src-tauri/target/release/。这里不打 dmg / msi / nsis 安装器 —— 桌面壳是插件随包带的
+# 显示组件，不是给最终用户双击安装的应用。
+#
+# 构建出的裸产物由 tools/build-desktop-shell.mjs 打成 build/desktop-shell/<平台>/ 里的平台包，
+# 上传为 artifact；手动触发或打 shell-v* tag 时，再把五个平台包一起发到 npm。
+#
+# Tauri CLI 只在流水线里临时用一次：npx 拉官方 @tauri-apps/cli@2，不往 Tauri/package.json
+# 写依赖、也不动插件的锁文件；cargo install tauri-cli 要在每个 runner 上从头编一遍 CLI，慢得多。
+# Rust 取 stable：壳里的 tauri-plugin-opener 要求 Rust ≥1.90。
+
+name: 桌面显示壳
+
+on:
+  push:
+    branches: ['**']
+    tags: ['shell-v*']
+    # 只有壳与打包链路变了才编；tag 推送不受 paths 过滤影响，发版时照样编全部五个平台。
+    paths:
+      - 'Tauri/**'
+      - 'tools/build-desktop-shell.mjs'
+      - 'tools/publish-desktop-shell.mjs'
+      - '.github/workflows/desktop-shell.yml'
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS（${{ matrix.platform }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+          - platform: darwin-x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.1'
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 构建 .app（不打 dmg）
+        working-directory: Tauri
+        run: npx --yes @tauri-apps/cli@2 build --bundles app
+      - name: 打平台包
+        run: node tools/build-desktop-shell.mjs ${{ matrix.platform }}
+      # artifact 不保留文件权限，tar 一遍才能把可执行位带到发布任务。
+      - name: 归档（保留可执行位）
+        run: tar -czf shell-${{ matrix.platform }}.tgz -C build/desktop-shell ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.platform }}
+          path: shell-${{ matrix.platform }}.tgz
+          if-no-files-found: error
+
+  ubuntu:
+    name: Linux（${{ matrix.platform }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-22.04
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.1'
+      - uses: dtolnay/rust-toolchain@stable
+      # Tauri 2 要 WebKitGTK 4.1；Ubuntu 22.04 的源里就有，同时也是最低 glibc 基准。
+      - name: 装 webkit2gtk 等构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: 构建裸可执行文件（不打 deb / AppImage）
+        working-directory: Tauri
+        run: npx --yes @tauri-apps/cli@2 build --no-bundle
+      - name: 打平台包
+        run: node tools/build-desktop-shell.mjs ${{ matrix.platform }}
+      - name: 归档（保留可执行位）
+        run: tar -czf shell-${{ matrix.platform }}.tgz -C build/desktop-shell ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.platform }}
+          path: shell-${{ matrix.platform }}.tgz
+          if-no-files-found: error
+
+  windows:
+    name: Windows（${{ matrix.platform }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.1'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 构建裸可执行文件（不打 msi / nsis）
+        working-directory: Tauri
+        run: npx --yes @tauri-apps/cli@2 build --no-bundle
+      - name: 打平台包
+        run: node tools/build-desktop-shell.mjs ${{ matrix.platform }}
+      - name: 归档（保留可执行位）
+        run: tar -czf shell-${{ matrix.platform }}.tgz -C build/desktop-shell ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.platform }}
+          path: shell-${{ matrix.platform }}.tgz
+          if-no-files-found: error
+
+  publish:
+    name: 发布平台包
+    needs: [macos, ubuntu, windows]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.1'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@v4
+        with:
+          path: build/desktop-shell-artifacts
+      - name: 还原五个平台包目录
+        run: |
+          mkdir -p build/desktop-shell
+          for archive in build/desktop-shell-artifacts/*/*.tgz; do
+            tar -xzf "$archive" -C build/desktop-shell
+          done
+      # npm 凭据只从 GitHub Actions 的 NPM_TOKEN secret 取，仓库里不落任何凭据。
+      - name: 发布五个平台包
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node tools/publish-desktop-shell.mjs
