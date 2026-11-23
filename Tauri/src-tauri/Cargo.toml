@@ -1,4 +1,4 @@
-# 远程电脑桌面壳：Tauri 运行时与从 Rust 侧打开外链的 opener 依赖。
+# 远程电脑桌面壳：Tauri 运行时、从 Rust 侧打开外链的 opener 依赖，以及网页下载用的系统保存对话框插件。
 [package]
 name = "ai-hub"
 version = "0.1.0"
@@ -20,6 +20,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "=2.7.3"
+# 网页下载在 wry 里只给同步决策，落盘位置需要系统保存对话框，官方 dialog 插件补齐这项能力。
+tauri-plugin-dialog = "=2.6.0"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

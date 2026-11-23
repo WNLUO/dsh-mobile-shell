@@ -8,7 +8,19 @@
     "frontendDist": "../src"
   },
   "app": {
-    "windows": [],
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "AI-HUB",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 520,
+        "minHeight": 600,
+        "incognito": true,
+        "dragDropEnabled": false
+      }
+    ],
     "security": {
       "csp": null
     }
